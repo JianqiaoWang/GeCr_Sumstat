@@ -11,10 +11,13 @@ information of summary association statistics and external LD matrix
 
 ### summary statistics
 
-The summary statistics file should have the following information: - SNP
-- the name of the genetic variants - A1 - the effect allele. - n -
-number of samples used when testing the predictor. - Z - The z test
-staitistics of the genetic variants.  
+The summary statistics file should have the following information:
+
+  - SNP: the name of the genetic variants
+  - A1: the effect allele.
+  - n: number of samples used when testing the predictor.
+  - Z: The z test staitistics of the genetic variants.
+
 Note that the Z statistics could be calculated based on estimate of
 effect size (or log odds) of a predictor, and its standard deviation, or
 converted from the p values along with effects size.
@@ -31,8 +34,8 @@ The corresponding variant name and the effect allele should also be kept
   - external LD information
 
 We note theat two summary statistics should come from differet studies
-so that they are independent with each other. *Make sure that all files
-have the same genetic variants and effect alleles*
+so that they are independent with each other. **Make sure that all files
+have the same genetic variants and effect alleles**
 
 ## implement the method
 
