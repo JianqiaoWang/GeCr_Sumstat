@@ -1,0 +1,300 @@
+# return snp list
+# R.est.Rdata for same gender
+# R.est.Rdata for different gender
+
+############################################
+library(dplyr)
+library(data.table)
+library(parallel)
+library(tibble)
+library(stringr)
+library(Matrix)
+source('../../R/LDScore.R')
+#source('../../R/CoefGen.R')
+source('../../R/Genetic_Correlation_class_v2.R')
+source('../../R/SummaryStatistics.R')
+source('../../R/Precsion_Matrix_Estimation.R')
+source('../R_v2/Helper.R')
+load("../R_v2/Block_info.Rdata")
+load("../R_v2/external_snp_info.Rdata")
+load("../R_v2/FG.Rdata")
+load("../R_v2/FI.Rdata")
+
+# ------------------------------- GL female & GH male ------------------------------------
+
+UKBB.FG.female = fread("../UKBiobank/30740_irnt.imputed_v3.ldsc.female.tsv")
+#UKBB.FG = fread("../Data/30740_irnt.imputed_v3.ldsc.both_sexes.tsv/30740_irnt.imputed_v3.ldsc.both_sexes.tsv")
+#UKBB.FG.male = fread("../Data/30740_irnt.imputed_v3.ldsc.male.tsv/30740_irnt.imputed_v3.ldsc.male.tsv")
+UKBB.GH.male = fread("../UKBiobank/30750_irnt.imputed_v3.ldsc.male.tsv")
+UKBB.FG.male = UKBB.GH.male
+
+# -------------------------------- GL male & GH female --------------------------------
+if (T){
+UKBB.FG.male = fread("../UKBiobank/30740_irnt.imputed_v3.ldsc.male.tsv")
+#UKBB.FG = fread("../Data/30740_irnt.imputed_v3.ldsc.both_sexes.tsv/30740_irnt.imputed_v3.ldsc.both_sexes.tsv")
+#UKBB.FG.male = fread("../Data/30740_irnt.imputed_v3.ldsc.male.tsv/30740_irnt.imputed_v3.ldsc.male.tsv")
+UKBB.GH.female = fread("../UKBiobank/30750_irnt.imputed_v3.ldsc.female.tsv")
+UKBB.FG.female = UKBB.GH.female
+}
+# --------------------------------- Begin the procedure -----------------------------------
+
+load("../R_v2/SNP_all.Rdata")
+SNP = SNP_all
+rm(SNP_all)
+gc()
+#############################################
+#load("../../SImulation_v2/BlockThresh/Templist_thresho_0_95.Rdata")
+load("../../SImulation_v2/BlockThresh/Templist08-all.Rdata")
+snp.block.non.zero = ((lapply(Templist, '[[', 2) %>% lapply(length)) >0)
+snplist = lapply(Templist, '[[', 2)[snp.block.non.zero] %>%  unlist
+block.len = lapply(Templist, '[[', 2)[snp.block.non.zero] %>% lapply(length) %>% unlist
+SNP = SNP %>% dplyr::select(snplist)
+#############################################
+ #Input: five columns , snp, A1, A2, Z, N
+sumstat.beta = UKBB.FG.female %>% dplyr::transmute(snp = SNP,
+                                        A1 =  A1,
+                                        A2 = A2,
+                                        Z = Z,
+                                        N = mean(N, na.rm = T))
+sumstat.gamma = UKBB.FG.male %>% dplyr::transmute(snp = SNP,
+                                                A1 =  A1,
+                                                A2 = A2,
+                                                Z =Z,
+                                                N = mean(N, na.rm = T))
+########################################
+########################################
+# Adjust for the snp allel
+#######################################
+complement <- function(x){
+  switch (x,
+          "A" = "T",
+          "C" = "G",
+          "T" = "A",
+          "G" = "C",
+          return(NA)
+  )
+}
+shared.snplist = dplyr::intersect(colnames(SNP), sumstat.beta$snp)
+SNP = SNP %>% dplyr::select(shared.snplist)
+extern.effect_allel = geno_dict_paid %>%
+  filter(snp %in% shared.snplist) %>%
+  dplyr::select(snp, effect_allele) %>%
+  as.vector()
+H = inner_join(extern.effect_allel, sumstat.beta, by = "snp")
+matched = (str_to_upper( H$effect_allele) == str_to_upper(H$A1))|( H$effect_allele == sapply(H$A1, complement)  )
+unmatched = str_to_upper( H$effect_allele) == str_to_upper(H$A2)
+snpid = H$snp[!matched]
+SNP[, snpid] = 2 - SNP[, snpid]
+SNP = na.process(SNP) %>% as.data.frame()
+#############################################
+# Get the external precisiom matrix and SIGMA
+#############################################
+set.seed(123)
+N = 10718/2
+ExternalID = sample(1:nrow(SNP), 2*N) # 2000 + (1:(2*N))
+ExternalID.Omega = ExternalID[1:N]
+ExternalID.Sigma = ExternalID[(N+1):(2*N)]
+non_empty_block = (1:nrow(block_info))[snp.block.non.zero]
+print("begin estimation");
+# Templist = mclapply(non_empty_block, function(i){
+#   set.seed(i)
+#   snp.extract = strsplit(block_info$rsid[i],
+#                          split = "|",
+#                          fixed = TRUE) %>% unlist
+#   snp.extract.inter = intersect(colnames(SNP), snp.extract)
+#   if(length(snp.extract.inter) == 0){ return( list( matrix(), matrix(), vector() ) ) }
+#   if(length(snp.extract.inter) ==1 ){ return(list(matrix(1,1,1), matrix(1,1,1), snp.extract.inter ) )}
+#
+#
+#   SNP = SNP %>% dplyr::select(snp.extract.inter)
+#   X2 = SNP %>% slice(ExternalID.Sigma)
+#   X1 = SNP %>% slice(ExternalID.Omega)
+#   Omega0 = (nrow(X1) - ncol(X1) -2 )/(nrow(X1) - 1) * solve( cor(X1) + 0.1 * diag(ncol(X1) ) )
+#   SIGMA = cor(X2)
+#   return(list( Omega0 ,  SIGMA, snp.extract.inter ) )
+#   print(i)
+# }, mc.cores = 20
+# )
+# save(Templist, file = "Templist_Split_validate_08.Rdata")
+load(file = "Templist_Split_validate_08.Rdata")
+snp.block.non.zero = ((lapply(Templist, '[[', 3) %>% lapply(length)) >0)
+SIGMA = lapply(Templist, '[[', 2)[snp.block.non.zero] %>%  bdiag
+Omega0 = lapply(Templist, '[[', 1)[snp.block.non.zero] %>%  bdiag
+snplist = lapply(Templist, '[[', 3)[snp.block.non.zero] %>%  unlist
+block.len = lapply(Templist, '[[', 3)[snp.block.non.zero] %>% lapply(length) %>% unlist
+snp.block.len = rep(block.len, times = block.len)
+#save(Templist, file = "Templist.Rdata")
+rm(Templist)
+rm(SNP)
+
+#######################################################
+
+#load("../Magic/R_v2/external_snp_info.Rdata")
+
+P = nrow(SIGMA)
+ldscore.data = geno_dict_paid %>% dplyr::filter(snp %in% snplist) %>%
+  dplyr::select("pos", "chr", "snp")
+LDSCORE <- Matrix::rowSums((N-1)/(N-2) * SIGMA^2) - (snp.block.len/(N-2))
+ldscore.data$LD <-  LDSCORE
+colnames(ldscore.data) = c("BP", "CHR", "SNP", "LD")
+fwrite(ldscore.data, file = "simu.l2.ldscore", quote = F, sep = "\t",
+       col.names=T, na = "NA" )
+fwrite(data.frame(P), file = "simu.l2.M_5_50", quote = F, sep = "\t",
+       col.names=F, na = "NA" )
+weight.ld.data = ldscore.data
+weight.ld.data$LD = 1
+colnames(weight.ld.data) = c("BP", "CHR", "SNP", "LD")
+fwrite(weight.ld.data, file = "weight.l2.ldscore", quote = F, sep = "\t",
+       col.names=T, na = "NA" )
+fwrite(data.frame(P), file = "weight.l2.M_5_50", quote = F, sep = "\t",
+       col.names=F, na = "NA" )
+
+############################################
+
+#mu.3 = sum((t(SIGMA) %*% SIGMA) * SIGMA) -
+
+##########################################
+
+
+
+Result_function = function(i,
+                           Y1.list, Y2.list, beta_mg.list,
+                           gamma_mg.list, n.list, m.list, info = NA,
+                           SIGMA, Omega0, I, P ,  h2.X, h2.Z, R, LDSCORE){
+
+  print("begin estimation")
+
+ #Y1 = Y1.list[[i]]
+
+ #Y2 = Y2.list[[i]]
+
+  n = n.list[[i]]
+
+  m = m.list[[i]]
+
+  beta_mg = beta_mg.list[[i]]
+
+  gamma_mg = gamma_mg.list[[i]]
+
+  beta_t = (beta_mg * sqrt(n - 2))/ sqrt( 1 - beta_mg^2 )
+
+  gamma_t =  (gamma_mg * sqrt(m - 2))/ sqrt( 1 - gamma_mg^2 )
+
+  GeCor.Analysis = GeCov$new(Beta_mg = beta_mg,
+                             Gamma_mg = gamma_mg,
+                             N1 = n,
+                             N2 = m
+  )
+
+  GeCor.Analysis$Estimation(Omega = Omega0, Sigma = SIGMA, Type = "proposed")
+
+#  GeCor.Analysis$Estimation(Omega = Omega0, Sigma = SIGMA, Type = "Dicker")
+
+  GeCor.Analysis$Var.Est(TRUE)
+  #
+  Proposed = c(GeCor.Analysis$GeCr.est,
+               GeCor.Analysis$GeCr.est.se,
+               GeCor.Analysis$h2.beta.est,
+               GeCor.Analysis$h2.beta.est.se,
+               GeCor.Analysis$h2.gamma.est,
+               GeCor.Analysis$h2.gamma.est.se,
+               GeCor.Analysis$rho.est,
+               GeCor.Analysis$rho.est.se)
+
+  print("estimate of the proposed estimator")
+
+  print(Proposed)
+
+  GeCor.Analysis$Estimation(Omega = I, Sigma = SIGMA, LDSCORE = LDSCORE, Type = "Identity")
+
+  GeCor.Analysis$Var.Est(TRUE)
+
+  Identity = c(GeCor.Analysis$GeCr.est,
+               GeCor.Analysis$GeCr.est.se,
+               GeCor.Analysis$h2.beta.est,
+               GeCor.Analysis$h2.beta.est.se,
+               GeCor.Analysis$h2.gamma.est,
+               GeCor.Analysis$h2.gamma.est.se,
+               GeCor.Analysis$rho.est,
+               GeCor.Analysis$rho.est.se)
+
+
+  print("estimate of the Identity estimator")
+
+  print(Identity)
+
+  LDSC.CSTR = NA
+
+  LDSC.NO.Weight = NA
+
+  LDSC.CSTR =GR.LDSC.EST.SE(J = i, Z1 = beta_t, Z2 = gamma_t, N1 = n, N2 = m, info = info,
+                            LDSCORE =  LDSCORE, CSTR = T,  weight=T)
+
+  LDSC.NO.Weight =GR.LDSC.EST.SE(J = i, Z1 = beta_t, Z2 = gamma_t, N1 = n, N2
+                                 = m, info = info, LDSCORE =  LDSCORE, CSTR = T,  weight=F)
+
+
+
+  # LDSC.NO.CSTR =GR.LDSC.EST.SE(Z1 = beta_t, Z2 = gamma_t, #
+  #N1 = n1, N2 = n2, LDSCORE =  LDSCORE, CSTR = F)
+
+
+  #LDSC.NO.CSTR = NA
+
+  return(list(Proposed = Proposed, Identity = Identity, LDSC.CSTR = LDSC.CSTR, LDSC.NO.Weight = LDSC.NO.Weight))
+
+}
+###################################################
+sumstat.beta = sumstat.beta %>% as.data.frame() %>% dplyr::filter(snp %in% snplist)
+n = mean(sumstat.beta$N, na.rm = T)
+rownames(sumstat.beta) = sumstat.beta$snp
+sumstat.beta = sumstat.beta[snplist,]
+sumstat.gamma = sumstat.gamma %>% as.data.frame() %>%  dplyr::filter(snp %in% snplist)
+m = mean(sumstat.gamma$N, na.rm = T)
+rownames(sumstat.gamma) = sumstat.gamma$snp
+sumstat.gamma = sumstat.gamma[snplist,]
+#beta.mg = sumstat.beta$Z/sqrt(n)
+beta_mg.list  = list(Z.to.Mg(sumstat.beta$Z, n = n ))
+n.list = list(n)
+gamma_mg.list  = list(Z.to.Mg(sumstat.gamma$Z, n = m ))
+m.list = list(m)
+I = Matrix::Diagonal(P)
+info = data.frame(SNP = sumstat.beta$snp,
+                  A1 = sumstat.beta$A1,
+                  A2 = sumstat.beta$A2)
+
+####################################
+result = mclapply(1,  Result_function,
+                  beta_mg.list = beta_mg.list,
+                  gamma_mg.list = gamma_mg.list,
+                  n.list = n.list,
+                  m.list = m.list,
+                  SIGMA = SIGMA,
+                  Omega0 = Omega0,
+                  LDSCORE = LDSCORE,
+                  info = info,
+                  I = I,
+                  P = P,
+                  mc.cores = 1)
+
+save(result, file ="result.Rdata")
+
+#count = 1
+
+#res.vec.1 = vector()
+
+#res.vec.2 = vector()
+
+#
+# for(i in 1:(length(block.len)-2)){
+#
+#   #t(beta_mg)[count:(count + block.len[i])] %*% Omega0[count:(count + block.len[i]), count:(count + block.len[i])] %*% beta_mg[count:(count + block.len[i])]
+#
+#   res.vec.1 = c(res.vec.1,
+#                 sum( Omega0[count:(count + block.len[i]), count:(count + block.len[i])] *  SIGMA[count:(count + block.len[i]), count:(count + block.len[i])] )
+#   )
+#
+#   res.vec.2 = c(res.vec.2,  block.len[i])
+#
+#   count = count + block.len[i]
+# }

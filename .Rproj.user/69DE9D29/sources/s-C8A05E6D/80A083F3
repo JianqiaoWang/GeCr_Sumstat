@@ -1,0 +1,25 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1645986088238.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "80A083F3",
+    "lastKnownWriteTime" : 1645987260,
+    "last_content_update" : 1645987260517,
+    "path" : "P:/GeCr/Magic/RFinal/R_whole_Genome_Est_v5.R",
+    "project_path" : null,
+    "properties" : {
+        "cursorPosition" : "147,31",
+        "scrollLine" : "0"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 3,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}
